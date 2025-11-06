@@ -220,6 +220,11 @@ void CosoriKettleBLE::send_packet_(const uint8_t *data, size_t len) {
     return;
   }
 
+  // Log TX packet at DEBUG level
+  if (len >= 6) {
+    ESP_LOGD(TAG, "TX Packet: type=0x%02x seq=0x%02x len=%d", data[1], data[2], len);
+  }
+
   auto status = esp_ble_gattc_write_char(this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
                                           this->tx_char_handle_, len, const_cast<uint8_t *>(data),
                                           ESP_GATT_WRITE_TYPE_NO_RSP, ESP_GATT_AUTH_REQ_NONE);
@@ -350,6 +355,10 @@ void CosoriKettleBLE::parse_compact_status_(const uint8_t *payload, size_t len) 
   uint8_t temp = payload[7];      // Current temperature
   uint8_t status = payload[8];    // Byte 14: heating status
 
+  // Log packet details at DEBUG level
+  ESP_LOGD(TAG, "RX Status: stage=0x%02x mode=0x%02x sp=%d°F temp=%d°F status=0x%02x (len=%d)",
+           stage, mode, sp, temp, status, len);
+
   // Validate temperature range
   if (temp < 40 || temp > 230)
     return;
@@ -357,10 +366,17 @@ void CosoriKettleBLE::parse_compact_status_(const uint8_t *payload, size_t len) 
   // Update state
   this->current_temp_f_ = temp;
   this->kettle_setpoint_f_ = sp;
+  bool prev_on_base = this->on_base_;
   this->on_base_ = (stage != 0);  // Use byte 10 (payload[4]) for on-base detection
   this->heating_ = (status != 0);
   this->status_received_ = true;
   this->last_status_seq_ = this->last_rx_seq_;
+
+  // Log when on_base state changes
+  if (prev_on_base != this->on_base_) {
+    ESP_LOGI(TAG, "On-base state changed: %s -> %s (stage=0x%02x)",
+             prev_on_base ? "ON" : "OFF", this->on_base_ ? "ON" : "OFF", stage);
+  }
 
   // Reset offline counter
   this->reset_online_status_();
@@ -382,6 +398,10 @@ void CosoriKettleBLE::parse_extended_status_(const uint8_t *payload, size_t len)
   uint8_t sp = payload[6];
   uint8_t temp = payload[7];
 
+  // Log packet details at DEBUG level
+  ESP_LOGD(TAG, "RX Extended: stage=0x%02x mode=0x%02x sp=%d°F temp=%d°F (len=%d)",
+           stage, mode, sp, temp, len);
+
   // Validate temperature range
   if (temp < 40 || temp > 230)
     return;
@@ -389,10 +409,17 @@ void CosoriKettleBLE::parse_extended_status_(const uint8_t *payload, size_t len)
   // Update state
   this->current_temp_f_ = temp;
   this->kettle_setpoint_f_ = sp;
-  this->on_base_ = true;  // Receiving status means on base
+  bool prev_on_base = this->on_base_;
+  this->on_base_ = (stage != 0);  // Use byte 10 (payload[4]) for on-base detection
   this->heating_ = (stage != 0);
   this->status_received_ = true;
   this->last_status_seq_ = this->last_rx_seq_;
+
+  // Log when on_base state changes
+  if (prev_on_base != this->on_base_) {
+    ESP_LOGI(TAG, "On-base state changed: %s -> %s (stage=0x%02x) [Extended]",
+             prev_on_base ? "ON" : "OFF", this->on_base_ ? "ON" : "OFF", stage);
+  }
 
   // Reset offline counter
   this->reset_online_status_();
