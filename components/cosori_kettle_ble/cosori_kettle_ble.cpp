@@ -340,6 +340,24 @@ void CosoriKettleBLE::process_frame_buffer_() {
 }
 
 void CosoriKettleBLE::parse_compact_status_(const uint8_t *payload, size_t len) {
+  // Check for off-base packet: length 4, payload [0x00, 0x40, 0x40, 0x00]
+  if (len == 4 && payload[0] == 0x00 && payload[1] == 0x40 && payload[2] == 0x40 && payload[3] == 0x00) {
+    ESP_LOGD(TAG, "Off-base packet detected");
+    this->on_base_ = false;
+    this->heating_ = false;
+    this->status_received_ = true;
+    this->last_status_seq_ = this->last_rx_seq_;
+
+    // Reset offline counter
+    this->reset_online_status_();
+
+    // Update entities
+    this->update_entities_();
+
+    ESP_LOGV(TAG, "Kettle off base");
+    return;
+  }
+
   // Compact status: 01 41 40 00 <stage> <mode> <sp> <temp> <status> ...
   if (len < 9 || payload[0] != 0x01 || payload[1] != 0x41)
     return;
@@ -357,7 +375,7 @@ void CosoriKettleBLE::parse_compact_status_(const uint8_t *payload, size_t len) 
   // Update state
   this->current_temp_f_ = temp;
   this->kettle_setpoint_f_ = sp;
-  this->on_base_ = true;  // Receiving status means on base
+  this->on_base_ = true;  // Normal status packet means on base
   this->heating_ = (status != 0);
   this->status_received_ = true;
   this->last_status_seq_ = this->last_rx_seq_;
@@ -627,12 +645,18 @@ void CosoriKettleBLE::update_climate_state_() {
              this->target_setpoint_f_, this->target_temperature);
   }
 
-  // Update mode based on heating state
-  if (this->heating_) {
+  // Update mode based on heating state and base status
+  if (!this->on_base_) {
+    // Off base - set to OFF mode
+    this->mode = climate::CLIMATE_MODE_OFF;
+    this->action = climate::CLIMATE_ACTION_IDLE;
+  } else if (this->heating_) {
+    // On base and heating
     this->mode = climate::CLIMATE_MODE_HEAT;
     this->action = climate::CLIMATE_ACTION_HEATING;
   } else {
-    // Keep mode but set action to idle
+    // On base but not heating - set to OFF mode
+    this->mode = climate::CLIMATE_MODE_OFF;
     this->action = climate::CLIMATE_ACTION_IDLE;
   }
 
